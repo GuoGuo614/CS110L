@@ -34,7 +34,50 @@ fn main() {
     // secret_word by doing secret_word_chars[i].
     let secret_word_chars: Vec<char> = secret_word.chars().collect();
     // Uncomment for debugging:
-    // println!("random word: {}", secret_word);
+    println!("random word: {}", secret_word);
 
     // Your code here! :)
+    let mut guessed_word: Vec<char> = vec!['-'; secret_word_chars.len()];
+    let mut guessed_letters: Vec<char> = Vec::new();
+    let mut counter = 0;
+
+    while counter < NUM_INCORRECT_GUESSES {
+        println!("\nThe word so far is {}", guessed_word.iter().collect::<String>());
+        println!("You have guessed the following letters: {}", guessed_letters.iter().collect::<String>());
+        println!("You have {} guesses left", NUM_INCORRECT_GUESSES - counter);
+        print!("Please guess a letter: ");
+        // Make sure the prompt from the previous line gets displayed:
+        io::stdout()
+            .flush()
+            .expect("Error flushing stdout.");
+        let mut guess = String::new();
+        io::stdin()
+            .read_line(&mut guess)
+            .expect("Error reading line.");
+        let ch = match guess.trim().chars().next() {
+            Some(c) => c,
+            None => {
+                println!("No input, try again.");
+                continue;
+            }
+        };
+
+        if guessed_letters.contains(&ch) {
+            println!("You already guessed '{}'", ch);
+            continue;
+        }
+        guessed_letters.push(ch);
+
+        let mut found = false;
+        for i in 0..secret_word_chars.len() {
+            if secret_word_chars[i] == ch {
+                guessed_word[i] = ch;
+                found = true;
+            }
+        }
+        if !found {
+            counter += 1;
+            println!("Wrong guess!");
+        }
+    }
 }
