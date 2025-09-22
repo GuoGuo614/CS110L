@@ -17,9 +17,14 @@ fn main() {
             println!("Target {} did not match any running PIDs or executables", target);
             std::process::exit(1);
         }
-        Some(process) => {
+        Some(ref process) => {
             process.print();
         }
+    }
+    let child_processes = ps_utils::get_child_processes(result.unwrap().pid)
+        .expect("None child process.");
+    for child in child_processes {
+        child.print();
     }
 }
 
