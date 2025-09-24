@@ -7,3 +7,5 @@ know](mailto:ryan@reberhardt.com); we'd love to hear from you!
 
 Please don't post solution code publicly on the internet. We have plagiarism
 detection tools, but we'd rather make it hard to plagiarize in the first place.
+
+Docker: docker run --rm -it -v $(pwd):/root/rust --name rust-dev rust bash
