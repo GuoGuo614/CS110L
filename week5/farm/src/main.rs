@@ -1,3 +1,4 @@
+use core::num;
 use std::collections::VecDeque;
 #[allow(unused_imports)]
 use std::sync::{Arc, Mutex};
@@ -66,17 +67,39 @@ fn get_input_numbers() -> VecDeque<u32> {
     numbers
 }
 
+fn pop_number(queue: &Mutex<VecDeque<u32>>) -> Option<u32> {
+    let mut q = queue.lock().unwrap();
+    q.pop_front()
+}
+
 fn main() {
     let num_threads = num_cpus::get();
     println!("Farm starting on {} CPUs", num_threads);
     let start = Instant::now();
 
-    // TODO: call get_input_numbers() and store a queue of numbers to factor
+    // Call get_input_numbers() and store a queue of numbers to factor
+    let vec_q = Arc::new(Mutex::new(get_input_numbers()));
+    let mut threads: Vec<thread::JoinHandle<()>> = Vec::new();
 
-    // TODO: spawn `num_threads` threads, each of which pops numbers off the queue and calls
+    // Spawn `num_threads` threads, each of which pops numbers off the queue and calls
     // factor_number() until the queue is empty
+    for _ in 0..num_threads {
+        let vec_q_ref = vec_q.clone();
+        threads.push(thread::spawn(move || {
+            loop {
+                let num = pop_number(&vec_q_ref);
+                if num.is_none() {
+                    break;
+                }
+                factor_number(num.unwrap());
+            }
+        }))
+    }
 
-    // TODO: join all the threads you created
+    // Join all the threads you created
+    for handle in threads {
+        handle.join().expect("End of factor numbers!!");
+    }
 
     println!("Total execution time: {:?}", start.elapsed());
 }
