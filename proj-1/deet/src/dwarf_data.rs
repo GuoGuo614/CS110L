@@ -1,8 +1,11 @@
 use crate::gimli_wrapper;
 use addr2line::Context;
+use nix::unistd::Pid;
 use object::Object;
 use std::convert::TryInto;
+use std::ffi::c_void;
 use std::{fmt, fs};
+use nix::sys::ptrace;
 
 #[derive(Debug)]
 pub enum Error {
@@ -143,6 +146,31 @@ impl DwarfData {
             println!("Line numbers:");
             for line in &file.lines {
                 println!("  * {} (at {:#x})", line.number, line.address);
+            }
+        }
+    }
+
+    pub fn print_var(&self, pid: Pid) {
+        for file in &self.files {
+            println!("Global variables:");
+            for var in &file.global_variables {
+                if let Location::Address(addr) = var.location {
+                    let value = ptrace::read(pid, addr as *mut c_void).unwrap();
+                    println!("    * {} ({}) = {}", var.name, var.entity_type.name, value);
+                }
+            }
+
+            println!("Functions:");
+            for func in &file.functions {
+                println!("  * {}",func.name);
+                for var in &func.variables {
+                    if let Location::FramePointerOffset(offset) = var.location {
+                        let regs = ptrace::getregs(pid).unwrap();
+                        let addr = (regs.rbp as isize + offset) as usize;
+                        let value = ptrace::read(pid, addr as *mut c_void).unwrap();
+                        println!("    * Variable: {} ({}) = {}", var.name, var.entity_type.name, value);
+                    }
+                }
             }
         }
     }

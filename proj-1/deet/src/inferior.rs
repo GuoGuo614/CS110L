@@ -147,6 +147,7 @@ impl Inferior {
         match wait_result {
             Ok(Status::Exited(exit_code)) => {
                 println!("Child exited (status {})", exit_code);
+                return;
             }
             Ok(Status::Signaled(signal)) => {
                 println!("Child terminated (signal {:?})", signal);
@@ -166,6 +167,7 @@ impl Inferior {
             }
             Err(error) => {
                 println!("Error waiting for child: {}", error);
+                return;
             }
         }
 
@@ -198,6 +200,22 @@ impl Inferior {
             }
             rip = ptrace::read(self.pid(), (rbp + 8) as ptrace::AddressType)? as usize;
             rbp = ptrace::read(self.pid(), rbp as ptrace::AddressType)? as usize;
+        }
+
+        Ok(())
+    }
+
+    pub fn step_to_next_line(&mut self, debug_data: &DwarfData) -> Result<(), nix::Error> {
+        let regs = ptrace::getregs(self.pid())?;
+        let current_rip = regs.rip as usize;
+        
+        if let Some(current_line) = debug_data.get_line_from_addr(current_rip) {
+            let next_line_num = current_line.number + 1;
+            if let Some(next_addr) = debug_data.get_addr_for_line(None, next_line_num) {
+                let orig_byte = self.write_byte(next_addr, 0xcc)?;
+                self.continue_proc(debug_data);
+                let _ = self.write_byte(next_addr, orig_byte);
+            }
         }
 
         Ok(())

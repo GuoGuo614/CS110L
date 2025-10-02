@@ -21,5 +21,6 @@ void func1(int a) {
 }
 
 int main() {
+    int var = 10;
     func1(42);
 }
