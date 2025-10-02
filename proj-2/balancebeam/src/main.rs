@@ -3,10 +3,12 @@ mod response;
 
 use clap::Parser;
 use rand::{Rng, SeedableRng};
-use std::convert::TryInto;
-use std::time::Duration;
+use std::collections::{HashMap, VecDeque};
+
+use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, RwLock};
+use std::io::{Error, ErrorKind};
 use tokio::time::sleep;
 
 use std::sync::Arc;
@@ -51,6 +53,8 @@ struct ProxyState {
     upstream_addresses: Vec<String>,
     /// Addresses of servers that are alive
     liveing_upstreams: RwLock<Vec<String>>,
+    /// Map for rate limit count
+    rate_sliding_window: Mutex<HashMap<String, VecDeque<Instant>>>,
 }
 
 #[tokio::main]
@@ -87,6 +91,7 @@ async fn main() {
         active_health_check_interval: options.active_health_check_interval,
         active_health_check_path: options.active_health_check_path,
         max_requests_per_minute: options.max_requests_per_minute,
+        rate_sliding_window: Mutex::new(HashMap::new()),
     });
 
     let state_temp = Arc::clone(&state);
@@ -111,31 +116,82 @@ async fn main() {
 }
 
 async fn active_health_check(state: Arc<ProxyState>) {
-    loop {    
-        sleep(Duration::from_secs(
-            state.active_health_check_interval.try_into().unwrap(),
-        )).await;
+    loop {
+        // Sleep for the configured interval before each probe round
+        let interval_secs = state.active_health_check_interval as u64;
+        sleep(Duration::from_secs(interval_secs)).await;
 
-        let mut living_upstreams = state.liveing_upstreams.write().await;
-        living_upstreams.clear();
+        let targets = state.upstream_addresses.clone();
+        let mut healthy = Vec::with_capacity(targets.len());
 
-        for upstream_ip in &state.upstream_addresses {
-            let request = http::Request::builder()
+        for upstream in targets {
+            let req = http::Request::builder()
                 .method(http::Method::GET)
-                .uri(&state.active_health_check_path)
-                .header("Host", upstream_ip)
-                .body(Vec::<u8>::new())
+                .uri(state.active_health_check_path.as_str())
+                .header("Host", upstream.as_str())
+                .body(Vec::new())
                 .unwrap();
 
-            if let Ok(mut conn) = TcpStream::connect(upstream_ip).await {
-                if let Ok(response) = response::read_from_stream(&mut conn, &request.method()).await {
-                    if response.status().as_u16() == 200 {
-                        living_upstreams.push(upstream_ip.clone());
+            match TcpStream::connect(&upstream).await {
+                Ok(mut conn) => {
+                    if let Err(err) = request::write_to_stream(&req, &mut conn).await {
+                        log::error!("health check write to {} failed: {}", upstream, err);
+                        continue;
                     }
+
+                    let response = match response::read_from_stream(&mut conn, &req.method()).await {
+                        Ok(r) => r,
+                        Err(err) => {
+                            log::error!("health check read from {} failed: {:?}", upstream, err);
+                            continue;
+                        }
+                    };
+
+                    if response.status().as_u16() == 200 {
+                        healthy.push(upstream);
+                    } else {
+                        log::warn!(
+                            "health check {} returned non-200 status: {}",
+                            upstream,
+                            response.status()
+                        );
+                    }
+                }
+                Err(err) => {
+                    log::error!("health check connect to {} failed: {}", upstream, err);
                 }
             }
         }
+
+        let mut live = state.liveing_upstreams.write().await;
+        *live = healthy;
     }
+}
+
+async fn rate_limiting_check(state: Arc<ProxyState>, client: &mut TcpStream) -> Result<(), Error> {
+    let client_ip = client.peer_addr().unwrap().ip().to_string();
+
+    let now = Instant::now();
+    let window = Duration::from_secs(60);
+    let cutoff = now - window;
+
+    let mut map = state.rate_sliding_window.lock().await;
+    let deque = map.entry(client_ip).or_insert(VecDeque::new());
+
+    while matches!(deque.front(), Some(ts) if *ts < cutoff) {
+        deque.pop_front();
+    }
+
+    if deque.len() >= state.max_requests_per_minute {
+        let response = response::make_http_error(http::StatusCode::TOO_MANY_REQUESTS);
+        if let Err(e) = response::write_to_stream(&response, client).await {
+            log::warn!("Failed to send 429: {}", e);
+        }
+        return Err(Error::new(ErrorKind::Other, "Too many requests"));
+    }
+
+    deque.push_back(now);
+    Ok(())
 }
 
 async fn connect_to_upstream(state: Arc<ProxyState>) -> Result<TcpStream, std::io::Error> {
@@ -228,6 +284,13 @@ async fn handle_connection(mut client_conn: TcpStream, state: Arc<ProxyState>) {
             upstream_ip,
             request::format_request_line(&request)
         );
+
+        if state.max_requests_per_minute > 0 {
+            let state = Arc::clone(&state);
+            if let Err(_) = rate_limiting_check(state, &mut client_conn).await {
+                continue;
+            }
+        }
 
         // Add X-Forwarded-For header so that the upstream server knows the client's IP address.
         // (We're the ones connecting directly to the upstream server, so without this header, the
