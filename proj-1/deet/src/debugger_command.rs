@@ -5,6 +5,7 @@ pub enum DebuggerCommand {
     Backtrace,
     Break(String),
     Print,
+    Next,
 }
 
 impl DebuggerCommand {
@@ -29,6 +30,7 @@ impl DebuggerCommand {
                 }
             },
             "p" | "print" => Some(DebuggerCommand::Print),
+            "n" | "next" => Some(DebuggerCommand::Next),
             _ => None,
         }
     }

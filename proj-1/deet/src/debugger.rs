@@ -1,4 +1,4 @@
-use crate::debugger_command::DebuggerCommand;
+use crate::{debugger_command::DebuggerCommand, inferior};
 use crate::inferior::Inferior;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
@@ -114,7 +114,14 @@ impl Debugger {
                     println!("Set breakpoint {} at {:#x}", idx, self.break_points[idx].addr);
                 }
                 DebuggerCommand::Print => {
-                    
+                    self.debug_data.print_var(self.inferior.as_ref().unwrap().pid());
+                }
+                DebuggerCommand::Next => {
+                    if let Some(inferior) = &mut self.inferior {
+                        inferior.step_to_next_line(&self.debug_data).unwrap();
+                    } else {
+                        println!("Error: no inferior process running. Use 'run' to start a process.");
+                    }
                 }
             }
         }
